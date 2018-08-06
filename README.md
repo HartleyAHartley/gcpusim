@@ -1,0 +1,1 @@
+A basic cpu with instructions based on the Gcpu.

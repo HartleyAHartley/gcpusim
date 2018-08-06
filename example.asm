@@ -1,0 +1,30 @@
+LDX #0x037E
+LDY 0x037E
+LDAA 2, X
+::loop
+INX
+INX
+STAA 1, Y
+LDAA 1, X
+LDAB 2, X
+SUM_BA
+SHFA_R
+STAA 0, Y
+LDAA 1, Y
+LDAB #0xFF
+SUM_BA
+INY
+::end
+BEQ ::end
+BNE ::loop
+
+org 0x37E
+db 0x70
+db 0x1E
+db 0x03
+db 0x20
+db 0x12
+db 0x03
+db 0x05
+db 0x49
+db 0x17
