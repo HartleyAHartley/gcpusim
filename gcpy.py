@@ -14,8 +14,13 @@ regBMatch = {"SUM_AB":(lambda x,y: x + y),
              "SHFB_R":(lambda x,y: y >> 1)}
 
 branchMatch = {"BEQ":(lambda x: x==0),"BNE":(lambda x: x!=0),
-               "BN":(lambda x: x<0),  "BP":(lambda x: x>=0)}
-dataMatch = {"LDAA"  :(lambda x: x.setReg("regA",x.parseOperand()))}
+               "BN" :(lambda x: x<0), "BP" :(lambda x: x>=0)}
+dataMatch = {"LDAA" :(lambda x: x.setReg("regA",x.parseOperand())),
+             "LDAB" :(lambda x: x.setReg("regB",x.parseOperand())),
+             "LDX"  :(lambda x: x.setReg("regX",x.parseOperand())),
+             "LDY"  :(lambda x: x.setReg("regY",x.parseOperand())),
+             "STAA" :(lambda x:  x.write("regA",x.parseOperand())),
+             "STAB" :(lambda x:  x.write("regB",x.parseOperand()))}
 class Gcpu:
     def __init__(self):
         self.regA = 0
@@ -31,8 +36,10 @@ class Gcpu:
         self.halt = False
         self.breakpoint = False
         self.incStep = True
-        self.bp = {"regA":"","regB":"","regX":"","regY":"","ram":""}
-        
+        self.bp = {"regA":"","regB":"","regX":"","regY":"","ram":"","rom":""}
+        self.bpline = []
+        self.continues = False
+
     def check_status(func):
         def _check_status(self, *args, **kwargs):
             if self.halt:
@@ -44,25 +51,58 @@ class Gcpu:
         return _check_status
     def check_regBP(func):
         def _check_regBP(self, *args, **kwargs):
-            if "w" in self.bp[args[0]]:
+            if "w" in self.bp[args[0]] and not self.continues:
                 self.breakpoint = True
-                print(f"Break on {args[0]} write: \n{self.CurrentInstruction()}")
+                print(f"Break on {args[0]} write: \n"+\
+                                "{self.CurrentInstruction()}")
                 return False
             else:
                 return func(self, *args, **kwargs)
         return _check_regBP
     def check_ramBP(func):
         def _check_ramBP(self, *args, **kwargs):
-            if "w" in self.bp["ram"]:
+            if "w" in self.bp["ram"] and not self.continues:
                 self.breakpoint = True
-                print(f"Break on ram write: \n{self.CurrentInstruction()}")
+                print(f"Break on ram write: \n"+\
+                               f"{self.CurrentInstruction()}")
+                data = 0
+                if args[0] == "regA":
+                    data = self.regA
+                else:
+                    data = self.regB
+                print(f"0x{data:0{2}X} ==> Address 0x{args[1]:0{4}X}")
                 return False
             else:
                 return func(self, *args, **kwargs)
         return _check_ramBP
+    def check_romBP(func):
+        def _check_romBP(self, *args, **kwargs):
+            if "r" in self.bp["rom"] and not self.continues:
+                self.breakpoint = True
+                print(f"Break on rom read: \n"+\
+                               f"{self.CurrentInstruction()}")
+                return False
+            else:
+                return func(self, *args, **kwargs)
+        return _check_romBP   
+    def check_lineBP(func):
+        def _check_lineBP(self, *args, **kwargs):
+            if self.line in self.bpline and not self.continues:
+                self.breakpoint = True
+                print(f"Break on 0x{self.line:0{3}X}: \n"+\
+                               f"{self.CurrentInstruction()}")
+                return False
+            else:
+                return func(self, *args, **kwargs)
+        return _check_lineBP
     def setBP(self,location,operation):
         if location in self.bp:
             self.bp[location] = operation
+        elif location == "line" and not (operation in self.bpline):
+                self.bpline.append(operation)
+        elif location == "rmline":
+                self.bpline.remove(operation)
+
     def CurrentInstruction(self):
         return f"0x{self.line:0{3}X}: {self.instructions[self.line][0]} "+\
                  " ".join(self.instructions[self.line][1])
@@ -75,7 +115,7 @@ class Gcpu:
     def strLabels(self):
         buffer = ""
         for i in self.labels:
-                buffer += f"{i[2:]}: {self.labels[i]}\n"
+                buffer += f"{i[2:]}: 0x{self.labels[i]:0{2}X}\n"
         return buffer
     def strRom(self):
         buffer = ""
@@ -84,14 +124,14 @@ class Gcpu:
         return buffer
     def strRam(self):
         buffer = ""
-        for i in self.ram:
+        for i in sorted(self.ram):
             buffer += f"0x{i:0{3}X}: 0x{self.ram[i]:0{2}X}\n"
         return buffer
     def strRegs(self):
-        buffer =f"REGA: {self.regA}\n"+\
-                f"REGB: {self.regB}\n"+\
-                f"REGX: {self.regX}\n"+\
-                f"REGY: {self.regY}\n"
+        buffer =f"REGA: 0x{self.regA:0{2}X}\n"+\
+                f"REGB: 0x{self.regB:0{2}X}\n"+\
+                f"REGX: 0x{self.regX:0{4}X}\n"+\
+                f"REGY: 0x{self.regY:0{4}X}\n"
         return buffer
     
     def __str__(self):
@@ -135,19 +175,34 @@ class Gcpu:
             lineNum += 1
     @check_status
     @check_ramBP
-    def write(self,addr,data):
-        if(addr < 0x1000 or addr > 0x1FFF):
-            ram[addr] = data
+    def write(self,reg,addr):
+        if(addr > 0x0FFF and addr < 0x2000):
+            if reg == "regA":
+                self.ram[addr] = self.regA
+            elif reg == "regB":
+                self.ram[addr] = self.regB
         else:
             print("Invalid write operation at line: "+str(self.line))
             self.halt = True
+    @check_status
+    @check_romBP        
+    def read(self,addr):
+        if (addr < 0x1000 and addr >= 0x0000):
+            return self.rom[addr]
+        elif (addr > 0x0FFF and addr < 0x2000):
+            return self.ram[addr]
+        else:
+            print("Invalid addr for reading; Gcpu has halted")
+            self.halt = True
+    @check_status
     def parse(self, instruction):
         inst = instruction[0]
         operands = instruction[1]
         if inst in branchMatch:
             if branchMatch[inst](self.regA):
                 if self.line == self.labels[operands[0]]:
-                    print("Execution has reached an infinite loop and has halted")
+                    print("Execution has reached an infinite loop"+\
+                                                   " and has halted")
                     self.halt = True
                 self.line = self.labels[operands[0]]
                 return False
@@ -160,9 +215,38 @@ class Gcpu:
                 self.setReg("regX",self.regX+1)
             elif inst == "INY":
                 self.setReg("regY",self.regY+1)
+        elif inst in dataMatch:
+            dataMatch[inst](self)
         return True
+    @check_status
     def parseOperand(self):
-        return
+        instr = self.instructions[self.line][0]
+        operand = " ".join(self.instructions[self.line][1])
+        if "#" in operand and instr in ["LDAA","LDAB","LDX","LDY"]:
+            return int(operand.strip()[1:],0)
+        elif "," in operand and instr in ["LDAA","LDAB","STAA","STAB"]:
+            commaEnd = operand.find(',')
+            addr = 0
+            if "Y" in operand:
+                addr = self.regY + int(operand[:commaEnd])
+            elif "X" in operand:
+                addr = self.regX + int(operand[:commaEnd])
+            if instr in ["LDAA","LDAB"]:
+                return self.read(addr)
+            else:
+                return addr
+        else:
+            addr = int(operand,0)
+            if instr in ["LDAA","LDAB"]:
+                return self.read(addr)
+            elif instr in ["STAA","STAB"]:
+                return addr
+            else:
+                data = self.read(addr+1)
+                data = data << 8
+                data += self.read(addr)
+                return data
+    @check_status
     @check_regBP
     def setReg(self, reg, data):
         if reg == "regA":
@@ -173,8 +257,8 @@ class Gcpu:
             self.regX = data & 0xFFFF
         elif reg == "regY":
             self.regY = data & 0xFFFF
-        
     @check_status
+    @check_lineBP
     def step(self,debug=False):
         try:
             self.incStep = self.parse(self.instructions[self.line])
@@ -182,28 +266,18 @@ class Gcpu:
             print("Execution has reached an undefined "+\
                   "instruction at address: " + hex(self.line))
             self.halt = True
-        if debug:
+        if debug and not self.breakpoint:
             print(self.CurrentInstruction())
-        if self.breakpoint:
-            self.breakpoint = False
-            return False
-        else:
+        if not self.breakpoint and self.incStep:
             self.line += 1
-            return True
+        self.continues = False
         
     @check_status
     def run(self,debug=False):
-        while not self.halt :
-            if not self.step(debug):
+        self.continues = True
+        while not self.halt:
+            self.step(debug)
+            if self.breakpoint:
+                self.breakpoint = False
                 break
             
-if len(sys.argv) == 1:
-    print("gcpy.py FILENAME")
-    exit()
-
-cpu = Gcpu()
-cpu.load(sys.argv[1])
-cpu.setBP("regX","w")
-cpu.run()
-cpu.dump()
-#DATA MOVEMENT
