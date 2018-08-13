@@ -188,12 +188,13 @@ class Gcpu:
     @check_romBP        
     def read(self,addr):
         if (addr < 0x1000 and addr >= 0x0000):
-            return self.rom[addr]
+                return self.rom[addr]
         elif (addr > 0x0FFF and addr < 0x2000):
-            return self.ram[addr]
+                return self.ram[addr]
         else:
             print("Invalid addr for reading; Gcpu has halted")
             self.halt = True
+        return 0
     @check_status
     def parse(self, instruction):
         inst = instruction[0]
@@ -227,10 +228,11 @@ class Gcpu:
         elif "," in operand and instr in ["LDAA","LDAB","STAA","STAB"]:
             commaEnd = operand.find(',')
             addr = 0
-            if "Y" in operand:
-                addr = self.regY + int(operand[:commaEnd])
-            elif "X" in operand:
-                addr = self.regX + int(operand[:commaEnd])
+            if "," in operand:
+                if "Y" in operand:
+                    addr = self.regY + int(operand[:commaEnd],0)
+                elif "X" in operand:
+                    addr = self.regX + int(operand[:commaEnd],0)
             if instr in ["LDAA","LDAB"]:
                 return self.read(addr)
             else:

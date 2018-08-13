@@ -2,21 +2,19 @@ LDX #0x037E
 LDY 0x037E
 LDAA 2, X
 ::loop
+STAA 0x1000
 INX
-INX
-STAA 1, Y
-LDAA 1, X
-LDAB 2, X
-SUM_BA
-SHFA_R
-STAA 0, Y
-LDAA 1, Y
+LDAA 0, X
+LDAB 1, X
+SUM_AB
+SHFB_R
+STAB 1, Y
+LDAA 0x1000
 LDAB #0xFF
 SUM_BA
-INY
 ::end
-BEQ ::end
 BNE ::loop
+BEQ ::end
 
 org 0x37E
 db 0x70
